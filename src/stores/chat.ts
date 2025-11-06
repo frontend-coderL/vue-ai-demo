@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { ChatMessage } from '@/types/chat'
 import { createAiClient } from '@/services/aiClient'
+import { createTypewriterController } from '@/utils/typewriter'
 
 interface ChatState {
   messages: ChatMessage[]
@@ -101,24 +102,38 @@ export const useChatStore = defineStore('chat', {
       this.messages.push(assistantMsg)
       this.persist()
 
+      // 创建打字机控制器：必须传入响应式代理而非原始对象，保证每次输出都触发渲染
+      // 使用非空断言确保取到刚插入的助手消息，避免类型为 ChatMessage | undefined
+      const assistantIndex = this.messages.length - 1
+      const assistantTarget = this.messages[assistantIndex]!
+      const typewriter = createTypewriterController(assistantTarget, 20)
+
       const client = createAiClient()
       try {
-        await client.chatStream(this.messages, { max_tokens: 1024, temperature: 0.7 }, {
-          onChunk: (delta: string) => {
-            assistantMsg.content += delta
-            // 使用对象引用确保响应式更新
-            this.persist()
+        await client.chatStream(
+          this.messages,
+          { max_tokens: 1024, temperature: 0.7 },
+          {
+            onChunk: (delta: string) => {
+              if (!delta || delta.length === 0) return
+              typewriter.push(delta)
+            },
+            onComplete: async () => {
+              // 流结束：若剩余输出过长，强制在 2 秒内收尾
+              typewriter.finishWithin(2000)
+              await typewriter.flush()
+              this.isLoading = false
+              this.persist()
+            },
+            onError: (err: Error) => {
+              // 终止可能仍在进行的打字并清空队列
+              typewriter.abort()
+              this.isLoading = false
+              this.error = err.message
+              this.persist()
+            },
           },
-          onComplete: () => {
-            this.isLoading = false
-            this.persist()
-          },
-          onError: (err: Error) => {
-            this.isLoading = false
-            this.error = err.message
-            this.persist()
-          },
-        })
+        )
       } catch (e) {
         this.isLoading = false
         this.error = e instanceof Error ? e.message : String(e)

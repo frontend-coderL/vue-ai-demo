@@ -1,13 +1,15 @@
 <script setup lang="ts">
 // 组件选项：设置多词组件名，满足 eslint 的 multi-word 规则
 defineOptions({ name: 'ChatPage' })
-import { onMounted, ref, nextTick } from 'vue'
+import { onMounted, ref, nextTick, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 
 // 输入框引用，便于发送后重新聚焦
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const text = ref('')
+// 列表滚动容器引用，替代通过 id 查询，确保响应式
+const scrollRef = ref<HTMLDivElement | null>(null)
 
 const chat = useChatStore()
 const { messages, isLoading, error } = storeToRefs(chat)
@@ -50,18 +52,31 @@ function onKeydown(e: KeyboardEvent) {
  * 滚动到消息列表底部，便于看到最新回复。
  */
 function scrollToBottom() {
-  const el = document.getElementById('chat-scroll')
+  const el = scrollRef.value
   if (el) {
     el.scrollTop = el.scrollHeight
   }
 }
+
+/**
+ * 监听消息变化（包含流式增量），在视图更新后自动滚动到底部。
+ * 使用 flush: 'post' 保证在 DOM 更新后执行；deep 监听对象内部的 content 变化。
+ */
+watch(
+  messages,
+  async () => {
+    await nextTick()
+    scrollToBottom()
+  },
+  { deep: true, flush: 'post' },
+)
 </script>
 
 <template>
   <div class="h-full w-full flex items-center justify-center">
     <div class="flex flex-col h-full w-[800px]">
       <!-- 顶部：历史消息列表 -->
-      <div id="chat-scroll" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+      <div ref="scrollRef" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
         <template v-if="messages.length">
           <div
             v-for="m in messages"
